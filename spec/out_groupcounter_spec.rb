@@ -35,6 +35,8 @@ describe Fluent::GroupCounterOutput do
         its(:add_tag_prefix) { should be_nil }
         its(:remove_tag_prefix) { should be_nil }
         its(:group_by_keys) { should == %w[foo] }
+        its(:inject_mode) { should == false }
+        its(:inject_count_key) { should == 'count' }
       end
 
       context "test template configuration" do
@@ -47,6 +49,8 @@ describe Fluent::GroupCounterOutput do
         its(:add_tag_prefix) { should == 'count' }
         its(:remove_tag_prefix) { should be_nil }
         its(:group_by_keys) { should == %w[code method path] }
+        its(:inject_mode) { should == false }
+        its(:inject_count_key) { should == 'count' }
       end
     end
   end
@@ -436,6 +440,33 @@ describe Fluent::GroupCounterOutput do
           "POST_ngword/2xx_count"=>1,
           "GET_messages/4xx_count"=>1,
         }
+      end
+      before do
+        Fluent::Engine.stub(:now).and_return(time)
+        Fluent::Engine.should_receive(:emit).with("count.#{tag}", time, expected)
+      end
+      it { emit }
+    end
+
+    context 'inject_mode' do
+      let(:config) { CONFIG + %[
+        inject_mode true
+        inject_count_key num
+      ]}
+      let(:messages) do
+        [
+          {"code" => "200", "method" => "GET",  "path" => "/api/people",   "reqtime" => 0.000 },
+          {"code" => "200", "method" => "POST", "path" => "/api/ngword",   "reqtime" => 1.001 },
+          {"code" => "400", "method" => "GET",  "path" => "/api/messages", "reqtime" => 2.002 },
+          {"code" => "200", "method" => "GET",  "path" => "/api/people",   "reqtime" => 3.003 },
+        ]
+      end
+      let(:expected) do
+        [
+          {"code" => "200", "method" => "GET",  "path" => "/api/people",   "num" => 2 },
+          {"code" => "200", "method" => "POST", "path" => "/api/ngword",   "num" => 1 },
+          {"code" => "400", "method" => "GET",  "path" => "/api/messages", "num" => 1 },
+        ]
       end
       before do
         Fluent::Engine.stub(:now).and_return(time)

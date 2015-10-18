@@ -70,7 +70,7 @@ Output becomes like
 
 * add\_tag\_prefix
 
-    The prefix string which will be added to the input tag. `output_per_tag yes` must be specified together. 
+    The prefix string which will be added to the input tag. `output_per_tag yes` must be specified together.
 
 * remove\_tag\_prefix
 
@@ -124,6 +124,22 @@ Output becomes like
 * avg\_suffix
 
     Default is `_avg`. Should be used with `avg_key` option.
+
+* inject\_mode
+
+    Default is `false`. If it is `true`, it will inject counter and other aggregated results to original record.
+
+    And injected record with only grouped key/values, instead of aggregated results, will be outputed.
+
+    It performs like a query `SELECT COUNT(\*),code,method,path GROUP BY code,method,path`.
+
+    NOTE: DO NOT use secret trick in `group_by_expression` in this mode.
+    And if `patternX` option is used, counter works well but pattern replacement will NOT be applied to original record data.
+    Therefore, the first record matching the pattern will represent that pattern in results.
+
+* inject\_count\_key
+
+    Key name of `COUNT(\*)` result that will be injected to records in `inject_mode`. Default is `count`.
 
 ## ChangeLog
 

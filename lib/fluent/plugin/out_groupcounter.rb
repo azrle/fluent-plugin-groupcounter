@@ -28,6 +28,8 @@ class Fluent::GroupCounterOutput < Fluent::Output
   config_param :min_suffix, :string, :default => '_min'
   config_param :avg_suffix, :string, :default => '_avg'
   config_param :store_file, :string, :default => nil
+  config_param :inject_mode, :bool, :default => false
+  config_param :inject_count_key, :string, :default => 'count'
   (1..PATTERN_MAX_NUM).each {|i| config_param "pattern#{i}".to_sym, :string, :default => nil }
 
   attr_accessor :count_interval
@@ -46,7 +48,7 @@ class Fluent::GroupCounterOutput < Fluent::Output
               when 'minute' then 60
               when 'hour' then 3600
               when 'day' then 86400
-              else 
+              else
                 raise RuntimeError, "@unit must be one of minute/hour/day"
               end
     end
@@ -112,6 +114,20 @@ class Fluent::GroupCounterOutput < Fluent::Output
     {}
   end
 
+  def generate_injected_output(counts_per_tag, output = [], key_prefix = '')
+    return [] unless counts_per_tag
+    counts_per_tag.each do |group_key, count|
+      # inject extra keys
+      count[key_prefix + "#{@avg_key}#{@avg_suffix}"] = count.delete(:sum) / (count[:count] * 1.0) if count[:sum] and count[:count] > 0
+      count[key_prefix + @inject_count_key]           = count.delete(:count) if count[:count]
+      count[key_prefix + "#{@min_key}#{@min_suffix}"] = count.delete(:min) if count[:min]
+      count[key_prefix + "#{@max_key}#{@max_suffix}"] = count.delete(:max) if count[:max]
+      output.push(count)
+    end
+
+    output
+  end
+
   def generate_fields(counts_per_tag, output = {}, key_prefix = '')
     return {} unless counts_per_tag
     # total_count = counts_per_tag.delete('__total_count')
@@ -131,19 +147,29 @@ class Fluent::GroupCounterOutput < Fluent::Output
 
   def generate_output(counts)
     if @output_per_tag # tag => output
+      return {'all' => generate_injected_output(counts['all'])} if @inject_mode and @aggregate == :all
       return {'all' => generate_fields(counts['all'])} if @aggregate == :all
 
       output_pairs = {}
       counts.keys.each do |tag|
-        output_pairs[stripped_tag(tag)] = generate_fields(counts[tag])
+        if @inject_mode
+          output_pairs[stripped_tag(tag)] = generate_injected_output(counts[tag])
+        else
+          output_pairs[stripped_tag(tag)] = generate_fields(counts[tag])
+        end
       end
       output_pairs
     else
+      return generate_injected_output(counts['all']) if @inject_mode and @aggregate == :all
       return generate_fields(counts['all']) if @aggregate == :all
 
-      output = {}
+      output = @inject_mode ? [] : {}
       counts.keys.each do |tag|
-        generate_fields(counts[tag], output, stripped_tag(tag) + @delimiter)
+        if @inject_mode
+          generate_injected_output(counts[tag], output, stripped_tag(tag) + @delimiter)
+        else
+          generate_fields(counts[tag], output, stripped_tag(tag) + @delimiter)
+        end
       end
       output
     end
@@ -171,7 +197,7 @@ class Fluent::GroupCounterOutput < Fluent::Output
     # for internal, or tests only
     @watcher = Thread.new(&method(:watch))
   end
-  
+
   def watch
     # instance variable, and public accessable, for test
     @last_checked ||= Fluent::Engine.now
@@ -203,7 +229,11 @@ class Fluent::GroupCounterOutput < Fluent::Output
 
       group_key = group_key(tag, time, record)
 
-      group_counts[group_key] ||= {}
+      unless group_counts[group_key]
+        group_counts[group_key] = {}
+        initialize_injected_record(record, group_counts[group_key]) if @inject_mode
+      end
+
       countup(group_counts[group_key], count)
     end
     summarize_counts(tag, group_counts)
@@ -213,14 +243,30 @@ class Fluent::GroupCounterOutput < Fluent::Output
     $log.warn "#{e.class} #{e.message} #{e.backtrace.first}"
   end
 
+  def initialize_injected_record(record, count)
+    # copy the original record
+    if @group_by_expression
+      @group_by_expression.scan(/\$\{([^}]+)\}/) do |k|
+        count[k[0]] = record[k[0]] if record[k[0]]
+      end
+    elsif @group_by_keys
+      @group_by_keys.each do |k|
+        count[k] = record[k] if record[k]
+      end
+    end
+  end
+
   # Summarize counts for each tag
   def summarize_counts(tag, group_counts)
     tag = 'all' if @aggregate == :all
     @counts[tag] ||= {}
-    
+
     @mutex.synchronize {
       group_counts.each do |group_key, count|
-        @counts[tag][group_key] ||= {}
+        unless @counts[tag][group_key]
+          @counts[tag][group_key] = {}
+          initialize_injected_record(count, @counts[tag][group_key]) if @inject_mode
+        end
         countup(@counts[tag][group_key], count)
       end
 
