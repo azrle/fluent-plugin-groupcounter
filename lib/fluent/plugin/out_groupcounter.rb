@@ -159,11 +159,11 @@ class Fluent::GroupCounterOutput < Fluent::Output
     time = Fluent::Engine.now
     if @output_per_tag
       flush.each do |tag, message|
-        Fluent::Engine.emit("#{@tag_prefix_string}#{tag}", time, message)
+        router.emit("#{@tag_prefix_string}#{tag}", time, message)
       end
     else
       message = flush
-      Fluent::Engine.emit(@tag, time, message) unless message.empty?
+      router.emit(@tag, time, message) unless message.empty?
     end
   end
 
